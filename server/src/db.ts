@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
-import { CATEGORIES, PRIORITIES, STATUSES } from '@shared/types';
+import { CATEGORIES, PRIORITIES, STATUSES, HISTORY_ACTIONS } from '@shared/types';
 
 export type Database = DatabaseSync;
 
@@ -11,6 +11,8 @@ const PRIORITY_CHECK = PRIORITIES.map((p) => `'${p}'`).join(', ');
 const STATUS_CHECK = STATUSES.filter((s) => s !== 'draft')
   .map((s) => `'${s}'`)
   .join(', ');
+// Built from shared constant — one source of truth for valid history actions.
+const HISTORY_ACTION_CHECK = HISTORY_ACTIONS.map((a) => `'${a}'`).join(', ');
 
 function initSchema(db: DatabaseSync): void {
   db.exec(`
@@ -38,9 +40,7 @@ function initSchema(db: DatabaseSync): void {
     CREATE TABLE IF NOT EXISTS report_history (
       id          TEXT    NOT NULL PRIMARY KEY,
       report_id   TEXT    NOT NULL REFERENCES reports(id),
-      action      TEXT    NOT NULL CHECK (action IN (
-                    'created', 'edited', 'synced', 'sync_failed', 'status_changed'
-                  )),
+      action      TEXT    NOT NULL CHECK (action IN (${HISTORY_ACTION_CHECK})),
       old_value   TEXT,
       new_value   TEXT,
       actor_role  TEXT    NOT NULL,
@@ -63,8 +63,6 @@ export function createDb(path: string): Database {
  * BEGIN IMMEDIATE takes the write lock upfront so a check-then-insert cannot
  * race with another request. fn() must be synchronous — an await inside would
  * allow other requests to interleave on the same connection mid-transaction.
- *
- * ponytail: no nested transactions — a second BEGIN inside fn() will throw.
  */
 export function runInTransaction<T>(db: Database, fn: () => T): T {
   db.exec('BEGIN IMMEDIATE');
