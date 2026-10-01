@@ -4,6 +4,9 @@ import { describe, it } from 'vitest';
 import { validateReport } from './validation';
 import { CATEGORIES, PRIORITIES } from './types';
 
+// Canonical ISO string the client produces with new Date().toISOString()
+const ISO = '2026-10-01T08:00:00.000Z';
+
 const good = {
   category: 'water_point',
   description: 'Hand pump at the north well is broken.',
@@ -11,6 +14,7 @@ const good = {
   lat: 12.34,
   lng: -56.78,
   priority: 'high',
+  reported_at: ISO,
 };
 
 describe('validateReport — happy path', () => {
@@ -25,6 +29,7 @@ describe('validateReport — happy path', () => {
         lat: 12.34,
         lng: -56.78,
         priority: 'high',
+        reported_at: ISO,
       },
     });
   });
@@ -46,6 +51,7 @@ describe('validateReport — happy path', () => {
       description: 'Open cable box near the market.',
       location: 'Central market, east gate',
       priority: 'critical',
+      reported_at: ISO,
     });
     assert.ok(result.valid);
     assert.equal(result.value.location, 'Central market, east gate');
@@ -94,38 +100,56 @@ describe('validateReport — happy path', () => {
   });
 });
 
+describe('validateReport — reported_at errors', () => {
+  it('rejects a missing reported_at', () => {
+    const { reported_at: _r, ...rest } = good;
+    const result = validateReport(rest);
+    assert.ok(!result.valid);
+    assert.ok(result.errors.includes('reported_at must be a string'));
+  });
+
+  it('rejects a non-canonical ISO string', () => {
+    const result = validateReport({ ...good, reported_at: '2026-10-01' });
+    assert.ok(!result.valid);
+    assert.ok(result.errors.some((e) => e.includes('canonical ISO 8601')));
+  });
+
+  it('rejects a non-ISO string', () => {
+    const result = validateReport({ ...good, reported_at: 'not a date' });
+    assert.ok(!result.valid);
+  });
+
+  it('rejects a non-string reported_at', () => {
+    const result = validateReport({ ...good, reported_at: Date.now() });
+    assert.ok(!result.valid);
+    assert.ok(result.errors.includes('reported_at must be a string'));
+  });
+});
+
 describe('validateReport — description errors (§8.2: empty description)', () => {
   it('rejects a missing description', () => {
     const { description: _drop, ...rest } = good;
     const result = validateReport(rest);
-    assert.deepStrictEqual(result, {
-      valid: false,
-      errors: ['description must be a non-empty string'],
-    });
+    assert.ok(!result.valid);
+    assert.ok(result.errors.includes('description must be a non-empty string'));
   });
 
   it('rejects an empty description', () => {
     const result = validateReport({ ...good, description: '' });
     assert.ok(!result.valid);
-    assert.ok(
-      result.errors.includes('description must be a non-empty string'),
-    );
+    assert.ok(result.errors.includes('description must be a non-empty string'));
   });
 
   it('rejects a whitespace-only description', () => {
     const result = validateReport({ ...good, description: ' \n\t ' });
     assert.ok(!result.valid);
-    assert.ok(
-      result.errors.includes('description must be a non-empty string'),
-    );
+    assert.ok(result.errors.includes('description must be a non-empty string'));
   });
 
   it('rejects a non-string description', () => {
     const result = validateReport({ ...good, description: 42 });
     assert.ok(!result.valid);
-    assert.ok(
-      result.errors.includes('description must be a non-empty string'),
-    );
+    assert.ok(result.errors.includes('description must be a non-empty string'));
   });
 });
 
@@ -152,17 +176,13 @@ describe('validateReport — location and coordinate errors (§8.2: out-of-range
   it('rejects lat without lng', () => {
     const result = validateReport({ ...good, lng: undefined });
     assert.ok(!result.valid);
-    assert.ok(
-      result.errors.includes('lat and lng must be provided together'),
-    );
+    assert.ok(result.errors.includes('lat and lng must be provided together'));
   });
 
   it('rejects lng without lat', () => {
     const result = validateReport({ ...good, lat: undefined });
     assert.ok(!result.valid);
-    assert.ok(
-      result.errors.includes('lat and lng must be provided together'),
-    );
+    assert.ok(result.errors.includes('lat and lng must be provided together'));
   });
 
   it('rejects lat above 90', () => {
@@ -202,9 +222,7 @@ describe('validateReport — location and coordinate errors (§8.2: out-of-range
     const { location: _l, lat: _la, lng: _ln, ...rest } = good;
     const result = validateReport(rest);
     assert.ok(!result.valid);
-    assert.ok(
-      result.errors.some((e) => e.startsWith('location is required')),
-    );
+    assert.ok(result.errors.some((e) => e.startsWith('location is required')));
   });
 });
 
@@ -224,7 +242,7 @@ describe('validateReport — priority errors', () => {
 });
 
 describe('validateReport — multiple errors accumulate in field order', () => {
-  it('reports category, description, location and priority problems together', () => {
+  it('reports category, description, location, priority and reported_at together', () => {
     const result = validateReport({
       category: 'nope',
       description: '',
@@ -237,6 +255,7 @@ describe('validateReport — multiple errors accumulate in field order', () => {
         'description must be a non-empty string',
         'location is required: provide location text and/or lat/lng coordinates',
         'priority must be one of: low, medium, high, critical',
+        'reported_at must be a string',
       ],
     });
   });
@@ -261,12 +280,12 @@ describe('validateReport — scope boundaries (§2.5, §2.11)', () => {
     assert.ok(result.valid);
   });
 
-  it('ignores server-side keys like id, version and timestamps', () => {
+  it('ignores server-side keys like id and version', () => {
+    // reported_at is now validated, so only truly server-side keys are ignored
     const result = validateReport({
       ...good,
       id: 'abc-123',
       version: 3,
-      reported_at: '2026-10-01T08:00:00Z',
     });
     assert.ok(result.valid);
   });

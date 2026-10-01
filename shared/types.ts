@@ -32,4 +32,10 @@ export interface ReportContent {
   lat: number | null;
   lng: number | null;
   priority: Priority;
+  /**
+   * When the field worker observed the issue (user-entered, §2 row 4).
+   * Validated as a canonical ISO 8601 string: new Date(s).toISOString() === s.
+   * The client defaults this to creation time in the form.
+   */
+  reported_at: string;
 }

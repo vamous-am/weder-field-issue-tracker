@@ -24,6 +24,8 @@ export interface ReportInput {
   lat?: unknown;
   lng?: unknown;
   priority?: unknown;
+  /** Observation time, user-entered (§2 row 4). Must be canonical ISO 8601. */
+  reported_at?: unknown;
   [key: string]: unknown;
 }
 
@@ -119,6 +121,23 @@ export function validateReport(
     errors.push(`priority must be one of: ${PRIORITIES.join(', ')}`);
   }
 
+  // reported_at — canonical ISO 8601, round-trip check (§2 row 4)
+  let reported_at = '';
+  if (typeof input.reported_at !== 'string') {
+    errors.push('reported_at must be a string');
+  } else {
+    try {
+      const parsed = new Date(input.reported_at).toISOString();
+      if (parsed !== input.reported_at) {
+        errors.push('reported_at must be a canonical ISO 8601 string (e.g. new Date().toISOString())');
+      } else {
+        reported_at = parsed;
+      }
+    } catch {
+      errors.push('reported_at must be a canonical ISO 8601 string (e.g. new Date().toISOString())');
+    }
+  }
+
   if (errors.length > 0) {
     return { valid: false, errors };
   }
@@ -131,6 +150,7 @@ export function validateReport(
       lat,
       lng,
       priority: input.priority as Priority,
+      reported_at,
     },
   };
 }
