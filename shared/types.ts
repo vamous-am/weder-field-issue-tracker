@@ -23,6 +23,20 @@ export type Category = typeof CATEGORIES[number];
 export const PRIORITIES = ['low', 'medium', 'high', 'critical'] as const;
 export type Priority = typeof PRIORITIES[number];
 
+export const HISTORY_ACTIONS = [
+  'created',
+  'edited',
+  'synced',
+  'sync_failed',
+  'status_changed',
+] as const;
+export type HistoryAction = typeof HISTORY_ACTIONS[number];
+
+/** Actions the client may upload. status_changed is server-only. */
+export const CLIENT_UPLOADABLE_ACTIONS = HISTORY_ACTIONS.filter(
+  (a) => a !== 'status_changed',
+) as readonly Exclude<HistoryAction, 'status_changed'>[];
+
 export interface ReportContent {
   category: Category;
   description: string;
