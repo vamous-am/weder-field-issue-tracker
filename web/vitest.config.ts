@@ -8,5 +8,11 @@ export default defineConfig({
   resolve: {
     alias: { '@shared': path.resolve(__dirname, '../shared') }
   },
-  test: { environment: 'jsdom' }
+  test: {
+    environment: 'jsdom',
+    environmentMatchGlobs: [
+      // repository tests use fake-indexeddb which works fine under node
+      ['src/db/**', 'node'],
+    ],
+  }
 });
