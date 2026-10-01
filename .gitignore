@@ -7,3 +7,7 @@ coverage/
 playwright-report/
 
 .freebuff
+
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
