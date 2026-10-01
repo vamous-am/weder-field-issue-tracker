@@ -44,6 +44,7 @@ function initSchema(db: DatabaseSync): void {
       old_value   TEXT,
       new_value   TEXT,
       actor_role  TEXT    NOT NULL,
+      actor_id    TEXT,
       timestamp   TEXT    NOT NULL
     );
   `);
