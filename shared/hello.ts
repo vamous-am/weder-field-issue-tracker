@@ -1,0 +1,1 @@
+export const hello = (): string => 'shared works';

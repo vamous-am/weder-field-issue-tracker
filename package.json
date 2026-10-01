@@ -1,0 +1,13 @@
+{
+  "name": "weder-field-issue-tracker",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "dev": "concurrently \"npm run dev --prefix server\" \"npm run dev --prefix web\"",
+    "test": "npm test --prefix shared && npm test --prefix server && npm test --prefix web"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0"
+  }
+}
