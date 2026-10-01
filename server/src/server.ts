@@ -1,12 +1,12 @@
-import express from 'express';
-import { hello } from '@shared/hello';
+import path from 'node:path';
+import { createDb } from './db.js';
+import { createApp } from './app.js';
 
-const app = express();
-app.use(express.json());
+const dbPath = process.env.DB_PATH
+  ?? path.join(import.meta.dirname, '../../data.sqlite');
 
-app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', shared: hello() });
-});
-
+const db = createDb(dbPath);
+const app = createApp(db);
 const port = Number(process.env.PORT ?? 3000);
+
 app.listen(port, () => console.log(`server on :${port}`));
