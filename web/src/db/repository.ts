@@ -55,6 +55,9 @@ export function createRepository(db: AppDb, deps: RepoDeps = {}) {
       resolution_notes: null,
       created_at: ts,
       updated_at: ts,
+      // M6 sync fields — 0 attempts, no error yet
+      attempts: 0,
+      last_error: null,
       // ReportContent defaults (all overridable by fields)
       category: 'maintenance',
       description: '',

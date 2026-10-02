@@ -9,7 +9,6 @@ export type SyncState = null | 'pending' | 'syncing' | 'synced' | 'failed';
  * are null for drafts. sync_state is null for drafts too — pending/syncing/
  * synced/failed only apply once the report has been submitted (M5 decision).
  *
- * content_dirty, attempts, last_error are deferred to M6.
  */
 export interface LocalReport extends ReportContent {
   id: string;
@@ -24,6 +23,13 @@ export interface LocalReport extends ReportContent {
   assigned_to: string | null;
   resolution_notes: string | null;
   sync_state: SyncState;
+  /**
+   * Send attempts since the last successful/terminal outcome (M6).
+   * Non-indexed. Missing values (old rows) read as 0 — never mutate schema.
+   */
+  attempts: number;
+  /** Message from the most recent retryable failure (M6). Non-indexed. */
+  last_error: string | null;
 }
 
 /**
