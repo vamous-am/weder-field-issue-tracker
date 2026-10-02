@@ -4,6 +4,7 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "start": "tsx src/server.ts",
+    "seed": "node scripts/seed.mjs",
     "test": "vitest run"
   },
   "dependencies": {
