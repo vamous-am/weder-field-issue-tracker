@@ -13,7 +13,11 @@ import {
 import type { Database } from './db.js';
 
 export interface AppOptions {
-  /** Absolute path to the built web app (dist/).  Skipped if absent. */
+  /**
+   * Absolute path to the built web app (dist/).
+   * When omitted, static serving is disabled — only API routes are active.
+   * server.ts passes this explicitly; tests omit it or pass a temp dir.
+   */
   webDist?: string;
 }
 
@@ -28,35 +32,27 @@ export function createApp(db: Database, options: AppOptions = {}) {
 
   app.use('/api/reports', createReportsRouter(db));
 
-  // ── Static web app ──────────────────────────────────────────────────────────
-  const distDir = options.webDist ?? path.resolve(
-    path.dirname(fileURLToPath(import.meta.url)),
-    '../../web/dist',
-  );
+  // ── Static web app (only when webDist is explicitly supplied) ───────────────
+  if (options.webDist && existsSync(options.webDist)) {
+    const distDir = options.webDist;
 
-  if (existsSync(distDir)) {
     // sw.js must never be served from a stale browser cache — the browser's
-    // SW update check depends on this response being fresh every time.
+    // SW update check depends on seeing a fresh response every time.
     app.get('/sw.js', (_req, res, next) => {
       res.setHeader('Cache-Control', 'no-cache');
-      next(); // pass through to express.static below
+      next();
     });
 
     app.use(express.static(distDir));
 
-    // SPA fallback: any GET that isn't an /api route and wasn't served by
-    // express.static gets the shell.  Unknown /api/* still hits the JSON
-    // handlers below.
-    app.get(/^(?!\/api\/).*/, (_req, res) => {
+    // SPA fallback: any GET that is neither /api nor /api/* falls through to
+    // the shell.  Unknown /api and /api/* still reach the JSON error handlers.
+    app.get(/^(?!\/api(?:\/|$))/, (_req, res) => {
       res.sendFile(path.join(distDir, 'index.html'));
     });
-  } else {
-    console.log(`[server] web dist not found at ${distDir} — static serving skipped`);
   }
 
   // ── Error handlers (must be after all routes) ───────────────────────────────
-  // Order: unknown API routes → 404 JSON; body-parse errors → 400 JSON;
-  // ApiError → its status code; everything else → 500.
   app.use(notFoundHandler);
   app.use(bodyParserErrorHandler);
   app.use(apiErrorHandler);

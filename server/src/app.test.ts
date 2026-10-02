@@ -55,6 +55,14 @@ describe('static serving and SPA fallback', () => {
     expect(res.text).toContain('console.log');
   });
 
+  it('GET /api (bare, no slash) returns JSON not index.html', async () => {
+    const app = makeApp();
+    const res = await request(app).get('/api');
+    // notFoundHandler returns JSON 404, not the SPA shell
+    expect(res.status).toBe(404);
+    expect(res.headers['content-type']).toMatch(/json/);
+  });
+
   it('/api/health still works', async () => {
     const app = makeApp();
     const res = await request(app).get('/api/health');
