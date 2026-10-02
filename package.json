@@ -7,6 +7,8 @@
   },
   "scripts": {
     "dev": "concurrently \"npm run dev --prefix server\" \"npm run dev --prefix web\"",
+    "build": "npm run build --prefix web",
+    "start": "npm start --prefix server",
     "test": "npm test --prefix shared && npm test --prefix server && npm test --prefix web"
   },
   "devDependencies": {
