@@ -72,12 +72,15 @@ async function patchStatus(
     body: JSON.stringify({ to, expectedVersion, resolution_notes }),
   });
   if (!res.ok) {
-    let msg = `Server error (${res.status})`;
+    const isConflict = res.status === 409;
+    let msg = isConflict ? 'This report changed. Review and try again.' : `Server error (${res.status})`;
     try {
       const body = (await res.json()) as { error?: { message?: string } };
-      if (body.error?.message) msg = body.error.message;
+      if (!isConflict && body.error?.message) msg = body.error.message;
     } catch { /* non-JSON */ }
-    throw new Error(msg);
+    const err = new Error(msg);
+    (err as Error & { is409: boolean }).is409 = isConflict;
+    throw err;
   }
   const data = (await res.json()) as { report: ServerReport };
   return data.report;
@@ -95,9 +98,11 @@ const STATUS_COLOR: Record<Status, string> = {
 };
 
 // ── Notes required ────────────────────────────────────────────────────────────
+// ponytail: this rule is also enforced server-side in reports.ts (needsNotes).
+// The cross-check test in web/src/sw/notes.test.ts pins them in sync.
 
-function notesRequired(to: Status): boolean {
-  return to === 'rejected' || to === 'resolved';
+function notesRequired(from: Status, to: Status): boolean {
+  return to === 'rejected' || to === 'resolved' || (from === 'resolved' && to === 'in_progress');
 }
 
 // ── Sub-component: ReportDetail ───────────────────────────────────────────────
@@ -146,7 +151,12 @@ function ReportDetail({ identity, reportId, onBack, onUpdated }: DetailProps) {
       setNotes('');
       await load();
     } catch (e) {
+      const is409 = (e as Error & { is409?: boolean }).is409 === true;
       setActionError(e instanceof Error ? e.message : String(e));
+      if (is409) {
+        // Stale version — silently refetch so the coordinator sees the new state.
+        await load();
+      }
     } finally {
       setActioning(false);
     }
@@ -217,21 +227,21 @@ function ReportDetail({ identity, reportId, onBack, onUpdated }: DetailProps) {
           {actionTo && (
             <div style={detailStyles.notesBlock}>
               <label style={detailStyles.label}>
-                Resolution notes{notesRequired(actionTo) ? ' *' : ' (optional)'}
+                Resolution notes{notesRequired(report.status, actionTo) ? ' *' : ' (optional)'}
                 <textarea
                   style={detailStyles.textarea}
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                   rows={3}
-                  aria-required={notesRequired(actionTo)}
-                  placeholder={notesRequired(actionTo) ? 'Required' : 'Optional'}
+                  aria-required={notesRequired(report.status, actionTo)}
+                  placeholder={notesRequired(report.status, actionTo) ? 'Required' : 'Optional'}
                 />
               </label>
               {actionError && <p style={detailStyles.error}>{actionError}</p>}
               <button
                 style={detailStyles.confirmBtn}
                 onClick={() => void handleAction()}
-                disabled={actioning || (notesRequired(actionTo) && notes.trim() === '')}
+                disabled={actioning || (notesRequired(report.status, actionTo) && notes.trim() === '')}
               >
                 {actioning ? 'Saving…' : `Confirm: → ${actionTo}`}
               </button>
@@ -317,7 +327,12 @@ export function CoordinatorView({ identity }: Props) {
       </div>
 
       {loading && <p style={styles.empty}>Loading…</p>}
-      {error && <p style={styles.errorText}>{error}</p>}
+      {!loading && error && (
+        <div style={styles.offlineBox} role="alert">
+          <p style={styles.offlineMsg}>Needs a connection — could not load reports.</p>
+          <button style={styles.retryBtn} onClick={() => void load()}>↻ Retry</button>
+        </div>
+      )}
 
       {!loading && !error && reports.length === 0 && (
         <p style={styles.empty}>No reports on the server yet.</p>
@@ -366,7 +381,9 @@ const styles = {
     border: '1px solid #cbd5e1', borderRadius: 8, cursor: 'pointer',
   },
   empty: { color: '#64748b', textAlign: 'center' as const, marginTop: 40 },
-  errorText: { color: '#dc2626', textAlign: 'center' as const },
+  offlineBox: { textAlign: 'center' as const, marginTop: 40, display: 'flex', flexDirection: 'column' as const, alignItems: 'center', gap: 12 },
+  offlineMsg: { color: '#dc2626', margin: 0, fontSize: 14 },
+  retryBtn: { padding: '8px 20px', fontSize: 14, background: '#f1f5f9', color: '#1e40af', border: '1px solid #cbd5e1', borderRadius: 8, cursor: 'pointer' },
   list: { listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column' as const, gap: 8 },
   listItem: {
     display: 'flex' as const, alignItems: 'center', gap: 10,

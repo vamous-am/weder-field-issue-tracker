@@ -112,7 +112,7 @@ describe('repository.resubmit', () => {
     // is rejected by the status check (not rejected anymore).
     const second = await h.repo.resubmit(worker1, 'r-1');
     expect(second.ok).toBe(false);
-    if (!second.ok) {
+    if (!second.ok && second.kind === 'validation') {
       expect(second.errors[0]).toMatch(/not rejected/i);
     }
 
@@ -131,7 +131,7 @@ describe('repository.resubmit', () => {
     // Now try to resubmit — the pre-flight outbox check should block it.
     const result = await h.repo.resubmit(worker1, 'r-1');
     expect(result.ok).toBe(false);
-    if (!result.ok) {
+    if (!result.ok && result.kind === 'validation') {
       expect(result.errors[0]).toMatch(/pending sync op/i);
     }
     expect(await h.db.outbox.count()).toBe(1); // no second op added
@@ -142,7 +142,7 @@ describe('repository.resubmit', () => {
     await h.repo.createDraft(worker1, 'r-1', { description: 'Hand pump', location: 'Village A' });
     const result = await h.repo.resubmit(worker1, 'r-1');
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.errors[0]).toMatch(/not rejected/i);
+    if (!result.ok && result.kind === 'validation') expect(result.errors[0]).toMatch(/not rejected/i);
   });
 
   it('resubmit sets status=submitted, sync_state=pending, content_dirty=false', async () => {

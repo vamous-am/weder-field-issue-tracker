@@ -1,11 +1,11 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { CATEGORIES, PRIORITIES } from '@shared/types';
 import { validateReport } from '@shared/validation';
 import { createRepository } from './db/repository';
 import { db } from './db/schema';
 import { useAutosave } from './useAutosave';
 import type { Identity } from './identity';
-import type { LocalReport } from './db/types';
+import type { LocalReport, LocalHistoryEvent } from './db/types';
 interface Props {
   identity: Identity;
   /** Pass an existing draft to reopen it; omit for a new report. */
@@ -49,6 +49,17 @@ export function ReportForm({ identity, existing, onSubmitted }: Props) {
   const [storageError, setStorageError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  // Local history events for the read-only timeline.
+  const [history, setHistory] = useState<LocalHistoryEvent[]>([]);
+  useEffect(() => {
+    if (!existing?.id) return;
+    db.reportHistory
+      .where('report_id').equals(existing.id)
+      .toArray()
+      .then((evts) => setHistory(evts.sort((a, b) => a.timestamp.localeCompare(b.timestamp))))
+      .catch(() => { /* non-critical */ });
+  }, [existing?.id]);
+
   const { reportId, saveError, onChange, flush } = useAutosave(
     identity,
     existing?.id ?? null,
@@ -86,6 +97,25 @@ export function ReportForm({ identity, existing, onSubmitted }: Props) {
           <p style={styles.errorBanner} role="alert">
             Last sync error: {existing.last_error}
           </p>
+        )}
+        {history.length > 0 && (
+          <div style={styles.timelineSection}>
+            <strong style={styles.timelineHeading}>History</strong>
+            <ol style={styles.timeline}>
+              {history.map((ev) => (
+                <li key={ev.id} style={styles.timelineItem}>
+                  <span style={styles.timelineAction}>{ev.action}</span>
+                  <span style={styles.timelineTs}>
+                    {new Date(ev.timestamp).toLocaleString()}
+                  </span>
+                  <span style={styles.timelineActor}>{ev.actor_role}/{ev.actor_id}</span>
+                  {ev.new_value && (
+                    <span style={styles.timelineVal}>{ev.new_value}</span>
+                  )}
+                </li>
+              ))}
+            </ol>
+          </div>
         )}
       </section>
     );
@@ -296,6 +326,14 @@ const styles = {
     borderRadius: 4,
     border: '1px solid #fca5a5',
   },
+  timelineSection: { marginTop: 12, borderTop: '1px solid #e2e8f0', paddingTop: 10 },
+  timelineHeading: { fontSize: 13, color: '#475569' },
+  timeline: { listStyle: 'none', padding: '8px 0 0', margin: 0, display: 'flex', flexDirection: 'column' as const, gap: 6 },
+  timelineItem: { display: 'grid', gridTemplateColumns: '110px 1fr', rowGap: 2, fontSize: 12, borderLeft: '2px solid #e2e8f0', paddingLeft: 8 } as React.CSSProperties,
+  timelineAction: { fontWeight: 700, color: '#1e293b' },
+  timelineTs: { color: '#94a3b8', fontSize: 11 },
+  timelineActor: { color: '#7c3aed', fontSize: 11, gridColumn: '1 / -1' },
+  timelineVal: { color: '#475569', fontSize: 11, gridColumn: '1 / -1' },
 } as const;
 
 // Validate that our form's fields satisfy the validator at submit time.
