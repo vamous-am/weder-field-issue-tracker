@@ -115,6 +115,36 @@ export function createRepository(db: AppDb, deps: RepoDeps = {}) {
   }
 
   // -------------------------------------------------------------------------
+  // updateContent
+  // Like updateDraft but also allows rejected reports. Sets content_dirty
+  // only for rejected (draft edits don't need the flag — they haven't synced).
+  // Called by the autosaver when a rejected report is re-opened for editing.
+  // -------------------------------------------------------------------------
+  async function updateContent(
+    identity: Identity,
+    id: string,
+    fields: DraftFields,
+  ): Promise<LocalReport> {
+    return db.transaction('rw', db.reports, async () => {
+      const report = await db.reports.get(id);
+      if (!report) throw new Error(`Report ${id} not found`);
+      if (report.reporter_id !== identity.user_id)
+        throw new Error(`Report ${id} is not owned by ${identity.user_id}`);
+      if (report.status !== 'draft' && report.status !== 'rejected')
+        throw new Error(`Report ${id} cannot be edited (status: ${report.status})`);
+
+      const updated: LocalReport = {
+        ...report,
+        ...fields,
+        updated_at: now(),
+        content_dirty: report.status === 'rejected' ? true : report.content_dirty,
+      };
+      await db.reports.put(updated);
+      return updated;
+    });
+  }
+
+  // -------------------------------------------------------------------------
   // submitDraft
   // Validates the stored record, then in one transaction:
   //   - moves status to submitted, sync_state to pending
@@ -198,5 +228,5 @@ export function createRepository(db: AppDb, deps: RepoDeps = {}) {
     return report;
   }
 
-  return { createDraft, updateDraft, submitDraft, listReports, getReport };
+  return { createDraft, updateDraft, updateContent, submitDraft, listReports, getReport };
 }

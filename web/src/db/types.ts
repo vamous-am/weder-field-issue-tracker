@@ -30,6 +30,12 @@ export interface LocalReport extends ReportContent {
   attempts: number;
   /** Message from the most recent retryable failure (M6). Non-indexed. */
   last_error: string | null;
+  /**
+   * True when the worker has edited a rejected report locally but the
+   * resubmit op has not yet synced (M7b). Non-indexed — no schema bump.
+   * Missing values (old rows) read as undefined → treat as false.
+   */
+  content_dirty?: boolean;
 }
 
 /**
@@ -63,7 +69,7 @@ export interface LocalHistoryEvent {
 export interface OutboxOp {
   /** Auto-incremented primary key */
   seq?: number;
-  type: 'create';
+  type: 'create' | 'resubmit';
   report_id: string;
   created_at: string;
 }
