@@ -218,9 +218,65 @@ export function networkErrorOutcome(err: unknown): Outcome {
   return { kind: 'retry', last_error: `Network error: ${message}` };
 }
 
+/**
+ * Build the POST /api/reports/:id/resubmit body.
+ * Sends only the whitelisted content fields (server merges them onto the
+ * stored record), the expectedVersion, and un-uploaded events.
+ * No local edited event in the payload — server writes its own (M7b decision).
+ */
+export function buildResubmitBody(
+  report: LocalReport,
+  events: LocalHistoryEvent[],
+): Record<string, unknown> {
+  const fields: Record<string, unknown> = {};
+  for (const key of ['category', 'description', 'location', 'lat', 'lng', 'priority', 'reported_at'] as const) {
+    fields[key] = report[key];
+  }
+  const body: Record<string, unknown> = {
+    expectedVersion: report.version,
+    fields,
+  };
+  const unuploaded = events.filter((e) => !e.uploaded).filter(isUploadable);
+  if (unuploaded.length > 0) {
+    body.events = unuploaded.map(toWireEvent);
+  }
+  return body;
+}
+
 // ---------------------------------------------------------------------------
-// Timeout wrapper — 10 s (M6 table). Injectable so tests never wait.
+// Resubmit 409 classification
 // ---------------------------------------------------------------------------
+
+export type Resubmit409Outcome =
+  | { kind: 'applied' }          // server status is no longer rejected → treat as success
+  | { kind: 'conflict'; notes: string | null };  // still rejected or other status → keep edits, show new notes
+
+/**
+ * Parse a 409 response from POST /:id/resubmit.
+ * - If the server's current status is not 'rejected', the change was applied
+ *   (the report moved on) → clear the op, mark synced.
+ * - If the report is still 'rejected' (different rejection reason, or version
+ *   changed), keep the edits and surface the new notes.
+ */
+export async function classifyResubmit409(res: Response): Promise<Resubmit409Outcome> {
+  const parsed = await parseBody(res);
+  // The server echoes the current report in 409 bodies (our server does for
+  // version conflicts; shape may vary). Try to read the status.
+  if (
+    parsed !== null &&
+    typeof parsed === 'object' &&
+    'report' in parsed
+  ) {
+    const row = (parsed as { report: Record<string, unknown> }).report;
+    if (row && row.status && row.status !== 'rejected') {
+      return { kind: 'applied' };
+    }
+    const notes = typeof row?.resolution_notes === 'string' ? row.resolution_notes : null;
+    return { kind: 'conflict', notes };
+  }
+  // No report in body — conservatively treat as conflict.
+  return { kind: 'conflict', notes: null };
+}
 
 /** [signal, cancel] pair — the cancel must always run (attemptFinally). */
 export function timeoutSignal(ms: number): { signal: AbortSignal; cancel: () => void } {
@@ -228,3 +284,4 @@ export function timeoutSignal(ms: number): { signal: AbortSignal; cancel: () => 
   const timer = setTimeout(() => controller.abort(), ms);
   return { signal: controller.signal, cancel: () => clearTimeout(timer) };
 }
+

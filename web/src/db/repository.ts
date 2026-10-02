@@ -204,6 +204,69 @@ export function createRepository(db: AppDb, deps: RepoDeps = {}) {
   }
 
   // -------------------------------------------------------------------------
+  // resubmit
+  // Validates the stored content, then in one transaction:
+  //   - moves status to submitted, sync_state to pending, content_dirty false
+  //   - adds one resubmit outbox row
+  // Guards: must be rejected, no existing pending op for this report.
+  // No local edited event — server writes edited + status_changed on resubmit;
+  // a local one would duplicate on upload (M7b decision: no local edited event).
+  // -------------------------------------------------------------------------
+  async function resubmit(
+    identity: Identity,
+    id: string,
+  ): Promise<SubmitResult> {
+    const report = await db.reports.get(id);
+    if (!report) return { ok: false, kind: 'validation', errors: [`Report ${id} not found`] };
+    if (report.reporter_id !== identity.user_id)
+      return { ok: false, kind: 'validation', errors: [`Report ${id} is not owned by ${identity.user_id}`] };
+    if (report.status !== 'rejected')
+      return { ok: false, kind: 'validation', errors: [`Report ${id} is not rejected (status: ${report.status})`] };
+
+    // Block a second resubmit op for the same report.
+    const existingOp = await db.outbox.where('report_id').equals(id).first();
+    if (existingOp)
+      return { ok: false, kind: 'validation', errors: [`Report ${id} already has a pending sync op`] };
+
+    const result = validateReport(report as unknown as ReportInput);
+    if (!result.valid) return { ok: false, kind: 'validation', errors: result.errors };
+
+    const ts = now();
+    const resubmitted: LocalReport = {
+      ...report,
+      status: 'submitted',
+      sync_state: 'pending',
+      content_dirty: false,
+      updated_at: ts,
+    };
+
+    const op: OutboxOp = {
+      type: 'resubmit',
+      report_id: id,
+      created_at: ts,
+    };
+
+    try {
+      await db.transaction('rw', db.reports, db.outbox, async () => {
+        // Re-check inside the transaction — guard against concurrent resubmit.
+        const current = await db.reports.get(id);
+        if (!current || current.status !== 'rejected') return;
+        const alreadyQueued = await db.outbox.where('report_id').equals(id).first();
+        if (alreadyQueued) return;
+
+        await db.reports.put(resubmitted);
+        await db.outbox.add(op);
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { ok: false, kind: 'storage', message };
+    }
+
+    const final = (await db.reports.get(id))!;
+    return { ok: true, report: final };
+  }
+
+  // -------------------------------------------------------------------------
   // listReports
   // Returns reports owned by the active identity, newest updated_at first.
   // -------------------------------------------------------------------------
@@ -228,5 +291,5 @@ export function createRepository(db: AppDb, deps: RepoDeps = {}) {
     return report;
   }
 
-  return { createDraft, updateDraft, updateContent, submitDraft, listReports, getReport };
+  return { createDraft, updateDraft, updateContent, submitDraft, resubmit, listReports, getReport };
 }

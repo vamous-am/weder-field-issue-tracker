@@ -94,7 +94,7 @@ export class Autosaver {
       const id = this.reportId;
       const identity = this.identity;
       const write = () =>
-        this.repo.updateDraft(identity, id, fields).then(
+        this.repo.updateContent(identity, id, fields).then(
           () => { this._saveError = null; },
           (err: unknown) => { this._saveError = err instanceof Error ? err.message : String(err); },
         );

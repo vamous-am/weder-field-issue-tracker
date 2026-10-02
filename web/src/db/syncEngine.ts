@@ -3,8 +3,10 @@ import type { LocalReport, LocalHistoryEvent, OutboxOp } from './types';
 import { newId as defaultNewId } from './newId';
 import {
   buildCreateBody,
+  buildResubmitBody,
   wireHeaders,
   classifyFailure,
+  classifyResubmit409,
   networkErrorOutcome,
   parseSuccessResponse,
   timeoutSignal,
@@ -141,7 +143,7 @@ export function createSyncEngine(deps: SyncEngineDeps) {
   }
 
   // -------------------------------------------------------------------------
-  // attempt — one HTTP try for one op
+  // attempt — one HTTP try for one op (create or resubmit)
   // -------------------------------------------------------------------------
 
   async function attempt(op: OutboxOpRow, report: LocalReport): Promise<Outcome> {
@@ -152,6 +154,50 @@ export function createSyncEngine(deps: SyncEngineDeps) {
 
     const { signal, cancel } = timeoutSignal(REQUEST_TIMEOUT_MS);
     try {
+      if (op.type === 'resubmit') {
+        // Read expectedVersion at send time (Option B — always fresh).
+        const res = await doFetch(`${baseUrl}/api/reports/${op.report_id}/resubmit`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Simulated-Role': wireHeaders(report).role,
+            'X-Simulated-User': wireHeaders(report).user_id,
+          },
+          body: JSON.stringify(buildResubmitBody(report, events)),
+          signal,
+        });
+        if (res.ok) return await parseSuccessResponse(res);
+        if (res.status === 409) {
+          // Resubmit-specific 409 handling: the spec's rule replaces generic
+          // terminal classification for this status code.
+          const r409 = await classifyResubmit409(res);
+          if (r409.kind === 'applied') {
+            // Server moved on — treat as success via a subsequent pull.
+            // Return a synthetic success-like terminal: mark synced and
+            // let pull fill in the new state on the next pass.
+            // ponytail: we can't reconstruct the full server echo here, so we
+            // mark synced with the existing version (pull will correct it).
+            return { kind: 'success', report: { version: report.version, received_at: report.received_at }, events: [] };
+          }
+          // Still rejected or conflict — keep edits, surface new notes.
+          return {
+            kind: 'terminal',
+            last_error: r409.notes
+              ? `Rejected again: ${r409.notes}`
+              : 'Resubmit conflict: report was rejected again',
+            resubmitConflict: true,
+          } as Outcome & { resubmitConflict?: boolean };
+        }
+        const fallback = await classifyFailure(res);
+        // For resubmit, any terminal failure (422/400/403/404) restores to
+        // rejected so the worker can fix and retry.
+        if (fallback.kind === 'terminal') {
+          return { ...fallback, resubmitConflict: true } as Outcome & { resubmitConflict?: boolean };
+        }
+        return fallback;
+      }
+
+      // Default: create op.
       const res = await doFetch(`${baseUrl}/api/reports`, {
         method: 'POST',
         headers: {
@@ -252,18 +298,37 @@ export function createSyncEngine(deps: SyncEngineDeps) {
       return;
     }
 
-    // terminal — ONE sync_failed event; op is deleted so the next pass skips it
+    // terminal — ONE sync_failed event; op is deleted so the next pass skips it.
+    // Special case: resubmit conflict (409, still rejected) → restore to
+    // rejected status with edits intact and content_dirty=true, so the worker
+    // can see the new rejection reason and fix their edit.
+    const isResubmitConflict = (outcome as Outcome & { resubmitConflict?: boolean }).resubmitConflict === true;
+
     await db.transaction('rw', db.reports, db.reportHistory, db.outbox, async () => {
       const current = await db.reports.get(op.report_id);
       if (!current) return;
 
       await db.outbox.delete(op.seq);
-      await db.reports.put({
-        ...current,
-        sync_state: 'failed',
-        attempts: prevAttempts + 1,
-        last_error: outcome.last_error,
-      });
+
+      if (isResubmitConflict) {
+        // Restore to rejected, keep edits, surface new notes via next pull.
+        await db.reports.put({
+          ...current,
+          status: 'rejected',
+          sync_state: 'failed',
+          attempts: prevAttempts + 1,
+          last_error: outcome.last_error,
+          content_dirty: true,
+        });
+      } else {
+        await db.reports.put({
+          ...current,
+          sync_state: 'failed',
+          attempts: prevAttempts + 1,
+          last_error: outcome.last_error,
+        });
+      }
+
       await db.reportHistory.add({
         id: newId(),
         report_id: op.report_id,

@@ -6,7 +6,6 @@ import { db } from './db/schema';
 import { useAutosave } from './useAutosave';
 import type { Identity } from './identity';
 import type { LocalReport } from './db/types';
-
 interface Props {
   identity: Identity;
   /** Pass an existing draft to reopen it; omit for a new report. */
@@ -36,7 +35,8 @@ function toLocalInput(iso: string | null | undefined): string {
 
 export function ReportForm({ identity, existing, onSubmitted }: Props) {
   const repo = createRepository(db);
-  const isReadOnly = existing && existing.status !== 'draft';
+  // Drafts and rejected reports are editable. Everything else is read-only.
+  const isReadOnly = existing && existing.status !== 'draft' && existing.status !== 'rejected';
 
   const [category, setCategory] = useState(existing?.category ?? 'maintenance');
   const [description, setDescription] = useState(existing?.description ?? '');
@@ -101,7 +101,13 @@ export function ReportForm({ identity, existing, onSubmitted }: Props) {
     setSubmitting(true);
     setSubmitErrors([]);
     setStorageError(null);
-    const result = await repo.submitDraft(identity, reportId);
+
+    // Use resubmit for rejected reports, submitDraft for new ones.
+    const isRejected = existing?.status === 'rejected';
+    const result = isRejected
+      ? await repo.resubmit(identity, reportId)
+      : await repo.submitDraft(identity, reportId);
+
     setSubmitting(false);
     if (!result.ok) {
       if (result.kind === 'storage') {
@@ -116,7 +122,17 @@ export function ReportForm({ identity, existing, onSubmitted }: Props) {
 
   return (
     <form style={styles.card} onSubmit={handleSubmit} onBlur={flush}>
-      <h2 style={styles.heading}>New report</h2>
+      <h2 style={styles.heading}>
+        {existing?.status === 'rejected'
+          ? `Edit & resubmit report #${existing.id.slice(0, 8)}`
+          : 'New report'}
+      </h2>
+
+      {existing?.status === 'rejected' && existing.resolution_notes && (
+        <div style={styles.rejectionNotes} role="alert">
+          <strong>Rejection reason:</strong> {existing.resolution_notes}
+        </div>
+      )}
 
       {saveError && (
         <p style={styles.errorBanner} role="alert">
@@ -214,7 +230,11 @@ export function ReportForm({ identity, existing, onSubmitted }: Props) {
       )}
 
       <button style={styles.button} type="submit" disabled={submitting}>
-        {submitting ? 'Submitting…' : 'Submit report'}
+        {submitting
+          ? 'Submitting…'
+          : existing?.status === 'rejected'
+            ? 'Resubmit report'
+            : 'Submit report'}
       </button>
     </form>
   );
