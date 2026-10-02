@@ -10,6 +10,12 @@ import {
   timeoutSignal,
   type Outcome,
 } from './syncWire';
+import {
+  mergeServerReport,
+  mergeEvents,
+  type ServerReportRow,
+  type ServerEventRow,
+} from './pullMerge';
 
 // ---------------------------------------------------------------------------
 // Engine dependencies — all injectable for deterministic tests
@@ -30,6 +36,8 @@ export interface SyncEngineDeps {
   schedule?: (fn: () => void | Promise<void>, delayMs: number) => void;
   clear?: () => void;
   retryBaseMs?: number;
+  /** Disable the pull step in syncOnce. Used by push-only tests. */
+  noPull?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -67,6 +75,7 @@ export function createSyncEngine(deps: SyncEngineDeps) {
     });
   const clear = deps.clear ?? (() => {});
   const retryBaseMs = deps.retryBaseMs ?? DEFAULT_RETRY_BASE_MS;
+  const noPull = deps.noPull ?? false;
 
   const state: EngineState = { running: false, rerun: false, timerEpoch: 0 };
 
@@ -328,6 +337,22 @@ export function createSyncEngine(deps: SyncEngineDeps) {
         }
       }
 
+      // Run pull after push drains (or immediately if nothing to push).
+      // Identity: pull uses each synced/failed report's own reporter_id.
+      // Since pullOnce takes a reporterId, we pull for every distinct reporter
+      // that has a non-draft local report. This covers multi-worker shared DBs.
+      if (!noPull) {
+        const allReports = await db.reports.toArray();
+        const reporters = new Set(
+          allReports
+            .filter((r) => r.status !== 'draft')
+            .map((r) => r.reporter_id),
+        );
+        for (const reporterId of reporters) {
+          await pullOnce(reporterId);
+        }
+      }
+
       if (passOutcome === 'retry') {
         const worst = await getWorstAttempts();
         scheduleRetry(nextRetryDelay(worst));
@@ -374,6 +399,132 @@ export function createSyncEngine(deps: SyncEngineDeps) {
   }
 
   // -------------------------------------------------------------------------
+  // pullOnce — GET /api/reports?reporter=me + per-report detail merges
+  // -------------------------------------------------------------------------
+
+  /**
+   * Fetch the server list for one reporter, then merge each row into the
+   * local DB. Failures are swallowed: a failed pull changes nothing and the
+   * next trigger retries.
+   *
+   * Race-safe design:
+   *   1. All network calls complete BEFORE any transaction opens.
+   *   2. Per-report rw transaction reads hasOutboxOp from inside itself.
+   *
+   * Skips: drafts, reports with pending/syncing outbox ops.
+   * Detail fetch: only when the server version differs from local OR the
+   *   report has no local events.
+   */
+  async function pullOnce(reporterId: string): Promise<void> {
+    try {
+      // ── Step 1: fetch the list ────────────────────────────────────────────
+      const listRes = await doFetch(
+        `${baseUrl}/api/reports?reporter=me`,
+        {
+          headers: {
+            'X-Simulated-Role': 'field_worker',
+            'X-Simulated-User': reporterId,
+          },
+        },
+      );
+      if (!listRes.ok) return; // failed pull — silent, retry next trigger
+
+      const listBody = await listRes.json() as { reports: ServerReportRow[] };
+      const serverRows = listBody.reports ?? [];
+
+      // Only merge rows that belong to this reporter.
+      const myRows = serverRows.filter((r) => r.reporter_id === reporterId);
+
+      // ── Step 2: for each row, decide if we need the full detail fetch ─────
+      const detailMap = new Map<string, { report: ServerReportRow; events: ServerEventRow[] }>();
+
+      for (const serverRow of myRows) {
+        const local = await db.reports.get(serverRow.id);
+        const localEvents = local
+          ? await db.reportHistory.where('report_id').equals(serverRow.id).toArray()
+          : [];
+
+        const needsDetail =
+          local === undefined ||             // server-only: need events
+          localEvents.length === 0 ||        // no events held: always fetch
+          (local.version !== null && serverRow.version !== local.version); // version differs
+
+        if (needsDetail) {
+          try {
+            const detailRes = await doFetch(
+              `${baseUrl}/api/reports/${serverRow.id}`,
+              {
+                headers: {
+                  'X-Simulated-Role': 'field_worker',
+                  'X-Simulated-User': reporterId,
+                },
+              },
+            );
+            if (detailRes.ok) {
+              const detail = await detailRes.json() as {
+                report: ServerReportRow;
+                events: ServerEventRow[];
+              };
+              detailMap.set(serverRow.id, { report: detail.report, events: detail.events ?? [] });
+            }
+          } catch {
+            // Individual detail fetch failure: skip this report for now.
+          }
+        } else {
+          // No detail needed — the list row is current, events are already local.
+          // Store an empty server events array; mergeEvents will be a no-op.
+          detailMap.set(serverRow.id, {
+            report: serverRow,
+            events: [],
+          });
+        }
+      }
+
+      // ── Step 3: per-report rw transaction ────────────────────────────────
+      for (const serverRow of myRows) {
+        const detail = detailMap.get(serverRow.id);
+        if (!detail) continue; // detail fetch failed for this row
+
+        await db.transaction('rw', db.reports, db.reportHistory, db.outbox, async () => {
+          const local = await db.reports.get(serverRow.id) ?? null;
+
+          // hasOutboxOp read INSIDE the transaction to avoid submit race.
+          const outboxOps = await db.outbox.where('report_id').equals(serverRow.id).toArray();
+          const hasOutboxOp = outboxOps.some(
+            (op) => {
+              // pending → sync_state is 'pending' or 'syncing' on the report
+              // We check the op exists; the sync_state check in mergeServerReport
+              // handles the actual skip logic via the flag.
+              return op.report_id === serverRow.id;
+            },
+          );
+
+          const merged = mergeServerReport(local, detail.report, hasOutboxOp);
+          if (merged === null) return; // skip (draft, or pending op)
+
+          await db.reports.put(merged);
+
+          // Merge events: local from DB, server from detail fetch (empty when
+          // no detail was needed — version matched and events already present).
+          const localEvts = local
+            ? await db.reportHistory.where('report_id').equals(serverRow.id).toArray()
+            : [];
+
+          const serverEvts = detail.events as ServerEventRow[];
+          const mergedEvts = mergeEvents(localEvts as LocalHistoryEvent[], serverEvts, serverRow.id);
+
+          // Write merged events: put each (Dexie put = upsert by primary key).
+          for (const ev of mergedEvts) {
+            await db.reportHistory.put(ev);
+          }
+        });
+      }
+    } catch {
+      // Outer failure (list fetch throw, JSON parse) — silent, no state change.
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // start / stop
   // -------------------------------------------------------------------------
 
@@ -390,6 +541,7 @@ export function createSyncEngine(deps: SyncEngineDeps) {
 
   return {
     syncOnce,
+    pullOnce,
     retry,
     recoverOnStart,
     resetSyncingToPending,

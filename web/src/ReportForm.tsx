@@ -71,6 +71,22 @@ export function ReportForm({ identity, existing, onSubmitted }: Props) {
         <p><strong>Location:</strong> {existing.location}</p>
         <p><strong>Priority:</strong> {existing.priority}</p>
         <p><strong>Reported at:</strong> {existing.reported_at}</p>
+        {existing.assigned_to && (
+          <p><strong>Assigned to:</strong> {existing.assigned_to}</p>
+        )}
+        {existing.resolution_notes && (
+          <p style={styles.rejectionNotes}>
+            <strong>
+              {existing.status === 'rejected' ? 'Rejection reason:' : 'Notes:'}
+            </strong>{' '}
+            {existing.resolution_notes}
+          </p>
+        )}
+        {existing.sync_state === 'failed' && existing.last_error && (
+          <p style={styles.errorBanner} role="alert">
+            Last sync error: {existing.last_error}
+          </p>
+        )}
       </section>
     );
   }
@@ -250,6 +266,15 @@ const styles = {
     margin: 0,
     color: '#b45309',
     fontSize: 13,
+  },
+  rejectionNotes: {
+    margin: 0,
+    color: '#b91c1c',
+    fontSize: 14,
+    padding: '8px',
+    background: '#fef2f2',
+    borderRadius: 4,
+    border: '1px solid #fca5a5',
   },
 } as const;
 

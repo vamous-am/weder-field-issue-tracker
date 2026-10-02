@@ -58,6 +58,8 @@ function setup(responses: Array<Response | Error> = []): Harness {
     clear: () => {
       scheduled.length = 0;
     },
+    // Pre-M7a tests verify push behaviour only; pull is tested in pullSync.test.ts
+    noPull: true,
   });
 
   return {
@@ -385,8 +387,8 @@ describe('concurrency and recovery', () => {
       now: () => ts,
       schedule: () => {},
       clear: () => {},
+      noPull: true,
     });
-
     const first = engine.syncOnce();
     const second = engine.syncOnce(); // arrives while running → rerun flag
     release();
@@ -496,6 +498,7 @@ describe('wire contract', () => {
       now: () => ts,
       schedule: () => {},
       clear: () => {},
+      noPull: true,
     });
 
     try {
@@ -545,6 +548,7 @@ describe('simulated lost response', () => {
       now: () => ts,
       schedule: () => {},
       clear: () => {},
+      noPull: true,
     });
 
     await repo.createDraft(worker1, 'r-1', { description: 'Lost response test', location: 'C' });
