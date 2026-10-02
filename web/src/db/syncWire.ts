@@ -171,6 +171,14 @@ export async function parseSuccessResponse(res: Response): Promise<Outcome> {
     return { kind: 'retry', last_error: 'Unreadable response from server' };
   }
   const body = data as { report: Record<string, unknown>; events?: Record<string, unknown>[] };
+  // The success transaction needs the server-assigned version + received_at.
+  // A 2xx without them cannot be completed locally — retry (replay returns 200).
+  if (
+    typeof body.report.version !== 'number' ||
+    typeof body.report.received_at !== 'string'
+  ) {
+    return { kind: 'retry', last_error: 'Unreadable response from server' };
+  }
   return {
     kind: 'success',
     report: body.report,

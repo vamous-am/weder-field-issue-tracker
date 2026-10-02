@@ -12,8 +12,9 @@ import type { LocalReport, LocalHistoryEvent } from './types';
 
 // No DB needed — pure functions only.
 
+const ts = '2026-10-01T08:00:00.000Z';
+
 function makeReport(overrides: Partial<LocalReport> = {}): LocalReport {
-  const ts = '2026-10-01T08:00:00.000Z';
   return {
     id: '11111111-1111-4111-8111-111111111111',
     reporter_id: 'worker-1',
@@ -174,20 +175,32 @@ const emptyRes = (status: number) => new Response(null, { status });
 describe('parseSuccessResponse', () => {
   it('accepts a 201 body with report and events', async () => {
     const outcome = await parseSuccessResponse(
-      jsonRes(201, { report: { id: 'r1', version: 1 }, events: [{ id: 'e1' }] }),
+      jsonRes(201, {
+        report: { id: 'r1', version: 1, received_at: ts },
+        events: [{ id: 'e1' }],
+      }),
     );
     expect(outcome).toEqual({
       kind: 'success',
-      report: { id: 'r1', version: 1 },
+      report: { id: 'r1', version: 1, received_at: ts },
       events: [{ id: 'e1' }],
     });
   });
 
   it('treats a missing events array as empty', async () => {
     const outcome = await parseSuccessResponse(
-      jsonRes(200, { report: { id: 'r1' } }),
+      jsonRes(200, { report: { id: 'r1', version: 1, received_at: ts } }),
     );
-    expect(outcome).toEqual({ kind: 'success', report: { id: 'r1' }, events: [] });
+    expect(outcome).toEqual({
+      kind: 'success',
+      report: { id: 'r1', version: 1, received_at: ts },
+      events: [],
+    });
+  });
+
+  it('is retryable when the echo lacks version or received_at', async () => {
+    const outcome = await parseSuccessResponse(jsonRes(201, { report: { id: 'r1' } }));
+    expect(outcome).toEqual({ kind: 'retry', last_error: 'Unreadable response from server' });
   });
 
   it('is retryable when the 2xx body is empty (stateful server possible)', async () => {
