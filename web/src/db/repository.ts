@@ -2,6 +2,7 @@ import type { AppDb } from './schema';
 import type { LocalReport, LocalHistoryEvent, OutboxOp } from './types';
 import type { ReportContent } from '@shared/types';
 import { validateReport } from '@shared/validation';
+import type { ReportInput } from '@shared/validation';
 import { newId as defaultNewId } from './newId';
 import type { Identity } from '../identity';
 
@@ -136,7 +137,7 @@ export function createRepository(db: AppDb, deps: RepoDeps = {}) {
       return { ok: true, report };
     }
 
-    const result = validateReport(report);
+    const result = validateReport(report as unknown as ReportInput);
     if (!result.valid) return { ok: false, kind: 'validation', errors: result.errors };
 
     const ts = now();

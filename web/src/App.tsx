@@ -1,15 +1,16 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { ROLES } from '@shared/types';
 import { getIdentity, setIdentity } from './identity';
 import { createRepository } from './db/repository';
 import { db } from './db/schema';
 import { createSyncEngine } from './db/syncEngine';
 import { ReportForm } from './ReportForm';
+import { CoordinatorView } from './CoordinatorView';
 import type { Identity } from './identity';
 import type { LocalReport } from './db/types';
 import type { SyncEngine } from './db/syncEngine';
 
 const WORKER_IDS = ['worker-1', 'worker-2'] as const;
+const COORDINATOR_IDS = ['coordinator-1'] as const;
 
 const SYNC_BADGE: Record<NonNullable<LocalReport['sync_state']> | 'draft', string> = {
   draft: '✏️',
@@ -54,8 +55,8 @@ export function App() {
     refreshList(identity);
   }, [identity, refreshList]);
 
-  function switchIdentity(userId: string) {
-    const next: Identity = { user_id: userId, role: 'field_worker' };
+  function switchIdentity(userId: string, role: Identity['role'] = 'field_worker') {
+    const next: Identity = { user_id: userId, role };
     setIdentity(next);
     setIdentityState(next);
     setView('list');
@@ -98,7 +99,22 @@ export function App() {
                 ...styles.identityBtn,
                 ...(identity.user_id === uid ? styles.identityBtnActive : {}),
               }}
-              onClick={() => switchIdentity(uid)}
+              onClick={() => switchIdentity(uid, 'field_worker')}
+              aria-pressed={identity.user_id === uid}
+            >
+              {uid}
+            </button>
+          ))}
+          <span style={styles.identityDivider} aria-hidden="true">|</span>
+          {COORDINATOR_IDS.map((uid) => (
+            <button
+              key={uid}
+              style={{
+                ...styles.identityBtn,
+                ...styles.identityBtnCoord,
+                ...(identity.user_id === uid ? styles.identityBtnActive : {}),
+              }}
+              onClick={() => switchIdentity(uid, 'coordinator')}
               aria-pressed={identity.user_id === uid}
             >
               {uid}
@@ -107,7 +123,12 @@ export function App() {
         </div>
       </header>
 
-      {view === 'list' && (
+      {/* Coordinator view — server-fetched, no local DB needed */}
+      {identity.role === 'coordinator' && (
+        <CoordinatorView identity={identity} />
+      )}
+
+      {identity.role === 'field_worker' && view === 'list' && (
         <main style={styles.main}>
           <div style={styles.topRow}>
             <button style={styles.newBtn} onClick={() => setView('new')}>
@@ -153,7 +174,7 @@ export function App() {
         </main>
       )}
 
-      {view === 'new' && (
+      {identity.role === 'field_worker' && view === 'new' && (
         <main style={styles.main}>
           <button style={styles.backBtn} onClick={() => { setView('list'); refreshList(identity); }}>
             ← Back
@@ -169,7 +190,7 @@ export function App() {
         </main>
       )}
 
-      {typeof view === 'object' && (
+      {identity.role === 'field_worker' && typeof view === 'object' && (
         <main style={styles.main}>
           <button style={styles.backBtn} onClick={() => { setView('list'); refreshList(identity); }}>
             ← Back
@@ -278,7 +299,6 @@ const styles = {
     borderRadius: 4,
     cursor: 'pointer',
   },
+  identityDivider: { color: 'rgba(255,255,255,0.3)', alignSelf: 'center' },
+  identityBtnCoord: { borderColor: '#fbbf24', color: '#fef9c3' },
 } as const;
-
-// Suppress unused import warning
-void ROLES;
