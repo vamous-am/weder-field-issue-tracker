@@ -13,6 +13,8 @@ export default defineConfig({
     environmentMatchGlobs: [
       // repository tests use fake-indexeddb which works fine under node
       ['src/db/**', 'node'],
+      // routing tests are pure logic — no DOM needed
+      ['src/sw/**', 'node'],
     ],
   }
 });
