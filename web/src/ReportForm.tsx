@@ -46,6 +46,7 @@ export function ReportForm({ identity, existing, onSubmitted }: Props) {
     toLocalInput(existing?.reported_at ?? new Date().toISOString()),
   );
   const [submitErrors, setSubmitErrors] = useState<string[]>([]);
+  const [storageError, setStorageError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   const { reportId, saveError, onChange, flush } = useAutosave(
@@ -83,10 +84,15 @@ export function ReportForm({ identity, existing, onSubmitted }: Props) {
     }
     setSubmitting(true);
     setSubmitErrors([]);
+    setStorageError(null);
     const result = await repo.submitDraft(identity, reportId);
     setSubmitting(false);
     if (!result.ok) {
-      setSubmitErrors(result.errors);
+      if (result.kind === 'storage') {
+        setStorageError(result.message);
+      } else {
+        setSubmitErrors(result.errors);
+      }
     } else {
       onSubmitted?.(result.report);
     }
@@ -99,6 +105,12 @@ export function ReportForm({ identity, existing, onSubmitted }: Props) {
       {saveError && (
         <p style={styles.errorBanner} role="alert">
           Autosave failed: {saveError}
+        </p>
+      )}
+
+      {storageError && (
+        <p style={styles.errorBanner} role="alert">
+          Submit failed (storage error): {storageError}
         </p>
       )}
 

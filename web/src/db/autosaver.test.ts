@@ -1,12 +1,13 @@
 import 'fake-indexeddb/auto';
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { AppDb } from './schema';
 import { Autosaver } from './autosaver';
 import type { Identity } from '../identity';
 
-// Use debounceMs=0 so the timer fires immediately on the next macrotask tick.
-// This avoids fighting fake-timer / IDB microtask ordering -- the coalescing
-// and sequencing logic is what we're testing, not the timer interval itself.
+// Use debounceMs=0 for sequencing/coalescing/recovery tests (avoids the
+// fake-timer / IDB setImmediate conflict). A separate suite uses
+// toFake: ['setTimeout', 'clearTimeout'] only, which leaves IDB's
+// setImmediate untouched, so the 300 ms boundary can be tested directly.
 
 let dbCounter = 0;
 function freshDb() {
@@ -15,8 +16,7 @@ function freshDb() {
 
 const worker1: Identity = { user_id: 'worker-1', role: 'field_worker' };
 
-/** Yield to the event loop once (lets debounce=0 timers fire). */
-function nextTick() {
+/** Yield to the event loop once (lets debounce=0 timers fire). */function nextTick() {
   return new Promise<void>((resolve) => setTimeout(resolve, 0));
 }
 
@@ -106,5 +106,36 @@ describe('Autosaver', () => {
     expect((await db.reports.get(id))?.description).toBe('recovered');
     expect(saver.saveError).toBeNull();
     await db.delete();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Debounce timing — only fakes setTimeout/clearTimeout so IDB's setImmediate
+// keeps running and transactions can resolve normally.
+// ---------------------------------------------------------------------------
+
+describe('Autosaver debounce timing', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('does not write before 300 ms but writes exactly once after', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const db = new AppDb(`autosaver-db-timing-${dbCounter++}`);
+    const saver = new Autosaver(db, worker1, null, 300);
+
+    saver.onChange({ description: 'debounced' });
+
+    // 299 ms -- timer has not fired yet, no write
+    await vi.advanceTimersByTimeAsync(299);
+    expect(await db.reports.count()).toBe(0);
+
+    // 1 ms more -- timer fires, IDB write completes
+    await vi.advanceTimersByTimeAsync(1);
+    await saver.drain();
+
+    expect(await db.reports.count()).toBe(1);
+    expect((await db.reports.toArray())[0].description).toBe('debounced');
+
+    await db.delete();
+    vi.useRealTimers();
   });
 });

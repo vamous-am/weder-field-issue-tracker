@@ -11,7 +11,8 @@ import type { Identity } from '../identity';
 
 export type SubmitResult =
   | { ok: true; report: LocalReport }
-  | { ok: false; errors: string[] };
+  | { ok: false; kind: 'validation'; errors: string[] }
+  | { ok: false; kind: 'storage'; message: string };
 
 // ---------------------------------------------------------------------------
 // Dependencies injected so tests can control time and IDs
@@ -123,9 +124,9 @@ export function createRepository(db: AppDb, deps: RepoDeps = {}) {
     id: string,
   ): Promise<SubmitResult> {
     const report = await db.reports.get(id);
-    if (!report) return { ok: false, errors: [`Report ${id} not found`] };
+    if (!report) return { ok: false, kind: 'validation', errors: [`Report ${id} not found`] };
     if (report.reporter_id !== identity.user_id)
-      return { ok: false, errors: [`Report ${id} is not owned by ${identity.user_id}`] };
+      return { ok: false, kind: 'validation', errors: [`Report ${id} is not owned by ${identity.user_id}`] };
 
     // Already submitted — idempotent return, no second outbox row.
     if (report.status !== 'draft') {
@@ -133,7 +134,7 @@ export function createRepository(db: AppDb, deps: RepoDeps = {}) {
     }
 
     const result = validateReport(report);
-    if (!result.valid) return { ok: false, errors: result.errors };
+    if (!result.valid) return { ok: false, kind: 'validation', errors: result.errors };
 
     const ts = now();
     const submitted: LocalReport = {
@@ -159,8 +160,8 @@ export function createRepository(db: AppDb, deps: RepoDeps = {}) {
         await db.outbox.add(op);
       });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return { ok: false, errors: [`submit failed: ${msg}`] };
+      const message = err instanceof Error ? err.message : String(err);
+      return { ok: false, kind: 'storage', message };
     }
 
     // Read back what was actually written.

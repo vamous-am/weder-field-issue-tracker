@@ -151,6 +151,10 @@ describe('submitDraft', () => {
     await repo.createDraft(worker1, id); // description is '' -- invalid
     const result = await repo.submitDraft(worker1, id);
     expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.kind).toBe('validation');
+    if (result.kind !== 'validation') return;
+    expect(result.errors.length).toBeGreaterThan(0);
     const report = await db.reports.get(id);
     expect(report?.status).toBe('draft');
     expect(report?.sync_state).toBeNull();
@@ -198,6 +202,10 @@ describe('submitDraft', () => {
 
     const result = await repo.submitDraft(worker1, id);
     expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.kind).toBe('storage');
+    if (result.kind !== 'storage') return;
+    expect(result.message).toContain('disk full');
 
     const report = await db.reports.get(id);
     expect(report?.status).toBe('draft');
